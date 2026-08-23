@@ -1,0 +1,7 @@
+venv/
+__pycache__/
+*.pyc
+.env
+services/prediction-service/package/
+services/prediction-service/lambda_deploy.zip
+.DS_Store
