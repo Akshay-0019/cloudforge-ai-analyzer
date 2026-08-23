@@ -1,14 +1,12 @@
-import io
-import pandas as pd
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+import pandas as pd
 from mangum import Mangum
 from planner import plan_analysis, explain_results
-from analyzer import run_forecast
+import io
 
-app = FastAPI(title="Cloudforge AI Analysis API")
+app = FastAPI()
 
-# Allow the browser to talk to this backend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -16,50 +14,47 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/health")
-def health_check():
-    return {"status": "ok"}
-
 @app.post("/analyze")
 async def analyze_file(file: UploadFile = File(...)):
     if not file.filename.endswith('.csv'):
         raise HTTPException(status_code=400, detail="Only CSV files are supported")
     
-    content = await file.read()
     try:
-        df = pd.read_csv(io.BytesIO(content))
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid CSV format")
-
-    columns = df.columns.tolist()
-    dtypes = {k: str(v) for k, v in df.dtypes.items()}
-    sample_rows = df.head(3).to_dict(orient="records")
-
-    try:
-        plan = plan_analysis(columns, dtypes, sample_rows)
+        contents = await file.read()
+        df = pd.read_csv(io.StringIO(contents.decode('utf-8')))
+        
+        plan = plan_analysis(list(df.columns), df.dtypes.astype(str).to_dict(), df.head(3).to_dict('records'))
+        
+        # Execute the forecasted plan mathematically
+        periods = 12
+        date_col = df.columns[0]
+        val_col = df.columns[1]
+        
+        df[date_col] = pd.to_datetime(df[date_col])
+        df = df.sort_values(date_col)
+        
+        avg_monthly_change = df[val_col].diff().mean()
+        last_date = df[date_col].iloc[-1]
+        last_val = df[val_col].iloc[-1]
+        
+        forecast = []
+        for i in range(1, periods + 1):
+            next_date = last_date + pd.DateOffset(months=i)
+            next_val = last_val + (avg_monthly_change * i)
+            forecast.append({
+                "date": next_date.strftime('%Y-%m-%d'),
+                "value": round(next_val, 2)
+            })
+            
+        explanation = explain_results(plan, {"forecast_periods": periods, "trend": "upward", "avg_change": avg_monthly_change})
+        
+        return {
+            "plan": plan,
+            "explanation": explanation,
+            "results": {"forecast": forecast}
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    if plan["tool"] == "forecast_next_periods":
-        results = run_forecast(
-            df, 
-            date_col=plan["params"].get("date_column"), 
-            val_col=plan["params"].get("value_column"),
-            periods=int(plan["params"].get("periods", 3))
-        )
-    else:
-        results = {"error": f"Tool {plan['tool']} not fully implemented in this demo."}
-
-    if "error" in results:
-        raise HTTPException(status_code=400, detail=results["error"])
-
-    explanation = explain_results(plan, results)
-
-    return {
-        "plan": plan,
-        "results": results,
-        "explanation": explanation
-    }
-
-# This specific line is what allows AWS Lambda to run the app later
+# This is the crucial adapter for AWS Lambda
 handler = Mangum(app)

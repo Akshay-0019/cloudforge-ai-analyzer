@@ -1,0 +1,11 @@
+{
+    "dev": {
+        "app_function": "app.handler",
+        "aws_region": "ap-south-1",
+        "profile_name": "default",
+        "project_name": "cloudforge",
+        "runtime": "python3.11",
+        "s3_bucket": "cloudforge-zappa-mumbai-bucket-999",
+        "slim_handler": true
+    }
+}
